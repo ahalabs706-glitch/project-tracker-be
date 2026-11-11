@@ -72,6 +72,7 @@ services:
     tmpfs:
       - /var/cache/nginx
       - /var/run
+      - /etc/nginx/conf.d
     init: true
     restart: unless-stopped
 

@@ -56,6 +56,12 @@ pipeline {
                     } else if (env.BRANCH_NAME == 'main') {
                         if (params.IMAGE_REPO != 'aha706/projectflow-api') {
                             error('Branch main hanya boleh deploy image production.')
+                            echo """
+                            DEBUG CD PARAMETERS
+                            BRANCH_NAME : ${env.BRANCH_NAME}
+                            IMAGE_REPO  : ${params.IMAGE_REPO}
+                            IMAGE_TAG   : ${params.IMAGE_TAG}
+                            """
                         }
 
                         env.DEPLOY_HOST = '3.27.25.5'
