@@ -326,18 +326,22 @@ pipeline {
 
     }
 
+
     post {
         always {
-            sh '''
-                echo "==========================================" 
-                echo "Cleanup"
-                echo "=========================================="
-                
-                docker-compose down -v || true
-                docker system prune -f || true
-            '''
+            node {
+                sh '''
+                    echo "=========================================="
+                    echo "Cleanup"
+                    echo "=========================================="
 
-            junit allowEmptyResults: true, testResults: '**/test-results.xml'
+                    docker-compose down -v || true
+                    docker system prune -f || true
+                '''
+
+                junit allowEmptyResults: true,
+                    testResults: '**/test-results.xml'
+            }
         }
 
         success {
@@ -371,5 +375,4 @@ pipeline {
             """
         }
     }
-
 }
