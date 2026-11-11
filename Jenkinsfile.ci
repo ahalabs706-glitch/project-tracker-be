@@ -329,50 +329,28 @@ pipeline {
 
     post {
         always {
-            node {
-                sh '''
-                    echo "=========================================="
-                    echo "Cleanup"
-                    echo "=========================================="
+            sh '''
+                echo "=========================================="
+                echo "Cleanup"
+                echo "=========================================="
 
-                    docker-compose down -v || true
-                    docker system prune -f || true
-                '''
+                docker-compose down -v || true
+            '''
 
-                junit allowEmptyResults: true,
-                    testResults: '**/test-results.xml'
-            }
+            junit allowEmptyResults: true,
+                testResults: '**/test-results.xml'
         }
 
         success {
-            echo """
-            ╔════════════════════════════════════════╗
-            ║     ✓ CI Pipeline Completed            ║
-            ║     Branch: ${env.BRANCH_NAME}
-            ║     Build: ${env.BUILD_NUMBER}
-            ╚════════════════════════════════════════╝
-            """
+            echo "CI Pipeline Completed"
         }
 
         failure {
-            echo """
-            ╔════════════════════════════════════════╗
-            ║     ✗ CI Pipeline Failed               ║
-            ║     Branch: ${env.BRANCH_NAME}
-            ║     Build: ${env.BUILD_NUMBER}
-            ║     Commit: ${env.COMMIT_HASH}
-            ╚════════════════════════════════════════╝
-            """
+            echo "CI Pipeline Failed"
         }
 
         unstable {
-            echo """
-            ╔════════════════════════════════════════╗
-            ║     ⚠ CI Pipeline Unstable             ║
-            ║     Branch: ${env.BRANCH_NAME}
-            ║     Build: ${env.BUILD_NUMBER}
-            ╚════════════════════════════════════════╝
-            """
+            echo "CI Pipeline Unstable"
         }
     }
 }
