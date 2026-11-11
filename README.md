@@ -80,6 +80,7 @@ The application is developed using separate frontend and backend repositories.
 - GitHub
 - Jenkins (CI/CD)
 - AWS (deployment environment)
+# tetsing
 
 ---
 
