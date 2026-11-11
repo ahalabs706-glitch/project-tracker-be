@@ -1,3 +1,4 @@
+
 pipeline {
     agent any
 
@@ -9,7 +10,7 @@ pipeline {
         )
         string(
             name: 'IMAGE_TAG',
-            defaultValue: 'latest',
+            defaultValue: '1',
             description: 'Tag image dari BUILD_NUMBER CI'
         )
     }
@@ -18,7 +19,9 @@ pipeline {
         REGISTRY = 'docker.io'
         DEPLOY_USER = 'ubuntu'
         APP_DIR = '/home/ubuntu/apps/projectflow/backend'
+
         SSH_CREDENTIALS_ID = 'deploy-ssh-key'
+        KNOWN_HOSTS_CREDENTIALS_ID = 'ssh-known-hosts'
     }
 
     options {
@@ -47,14 +50,18 @@ pipeline {
                         if (params.IMAGE_REPO != 'aha706/projectflow-api-dev') {
                             error('Branch develop hanya boleh deploy image dev.')
                         }
+
                         env.DEPLOY_HOST = '16.178.138.2'
+
                     } else if (env.BRANCH_NAME == 'main') {
                         if (params.IMAGE_REPO != 'aha706/projectflow-api') {
                             error('Branch main hanya boleh deploy image production.')
                         }
+
                         env.DEPLOY_HOST = '3.27.25.5'
+
                     } else {
-                        error("Branch tidak didukung untuk deployment: ${env.BRANCH_NAME}")
+                        error("Branch tidak didukung: ${env.BRANCH_NAME}")
                     }
 
                     env.DEPLOY_IMAGE =
@@ -70,8 +77,10 @@ pipeline {
         stage('Checkout CD Configuration') {
             steps {
                 checkout scm
+
                 sh '''
                     set -eu
+
                     test -f docker-compose.yml ||
                     test -f docker-compose.yaml ||
                     test -f compose.yaml
@@ -82,54 +91,85 @@ pipeline {
         stage('Deploy to Ubuntu') {
             steps {
                 sshagent(credentials: [env.SSH_CREDENTIALS_ID]) {
-                    sh '''
-                        set -eu
 
-                        # Pilih file Compose yang tersedia di repository.
-                        if [ -f docker-compose.yml ]; then
-                            COMPOSE_FILE=docker-compose.yml
-                        elif [ -f docker-compose.yaml ]; then
-                            COMPOSE_FILE=docker-compose.yaml
-                        else
-                            COMPOSE_FILE=compose.yaml
-                        fi
+                    withCredentials([
+                        file(
+                            credentialsId: env.KNOWN_HOSTS_CREDENTIALS_ID,
+                            variable: 'KNOWN_HOSTS'
+                        )
+                    ]) {
 
-                        # Kirim hanya konfigurasi Compose.
-                        # File .env di server tidak ditimpa.
-                        rsync -az \
-                            "$COMPOSE_FILE" \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/"
+                        sh '''
+                            set -eu
 
-                        echo "Validasi konfigurasi Compose..."
-                        ssh -o BatchMode=yes \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                            "cd '${APP_DIR}' &&
-                             IMAGE_REPO='${IMAGE_REPO}' \
-                             IMAGE_TAG='${IMAGE_TAG}' \
-                             docker compose -f '${COMPOSE_FILE}' config -q"
+                            # SSH configuration
+                            SSH_OPTS="-o UserKnownHostsFile=${KNOWN_HOSTS} \
+                                      -o StrictHostKeyChecking=yes \
+                                      -o BatchMode=yes"
 
-                        echo "Pull image ${DEPLOY_IMAGE}..."
-                        ssh -o BatchMode=yes \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                            "cd '${APP_DIR}' &&
-                             IMAGE_REPO='${IMAGE_REPO}' \
-                             IMAGE_TAG='${IMAGE_TAG}' \
-                             docker compose -f '${COMPOSE_FILE}' pull"
+                            # Select Compose file
+                            if [ -f docker-compose.yml ]; then
+                                COMPOSE_FILE=docker-compose.yml
+                            elif [ -f docker-compose.yaml ]; then
+                                COMPOSE_FILE=docker-compose.yaml
+                            else
+                                COMPOSE_FILE=compose.yaml
+                            fi
 
-                        echo "Menjalankan deployment..."
-                        ssh -o BatchMode=yes \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                            "cd '${APP_DIR}' &&
-                             IMAGE_REPO='${IMAGE_REPO}' \
-                             IMAGE_TAG='${IMAGE_TAG}' \
-                             docker compose -f '${COMPOSE_FILE}' up -d --no-build"
+                            echo "Target: ${DEPLOY_HOST}"
+                            echo "Image : ${IMAGE_REPO}:${IMAGE_TAG}"
 
-                        echo "Status container:"
-                        ssh -o BatchMode=yes \
-                            "${DEPLOY_USER}@${DEPLOY_HOST}" \
-                            "cd '${APP_DIR}' &&
-                             docker compose -f '${COMPOSE_FILE}' ps"
-                    '''
+                            # Verify SSH and create application directory
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "mkdir -p '${APP_DIR}'"
+
+                            # Upload Compose file only
+                            # Existing .env on server remains untouched
+                            rsync -az \
+                                -e "ssh $SSH_OPTS" \
+                                "$COMPOSE_FILE" \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/"
+
+                            # Validate Compose configuration
+                            echo "Validating Compose configuration..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' config -q"
+
+                            # Pull latest image
+                            echo "Pulling ${IMAGE_REPO}:${IMAGE_TAG}..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' pull"
+
+                            # Deploy
+                            echo "Starting deployment..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' up -d --no-build"
+
+                            # Verify container status
+                            echo "Container status:"
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 docker compose -f '${COMPOSE_FILE}' ps"
+                        '''
+                    }
                 }
             }
         }
@@ -139,6 +179,7 @@ pipeline {
         success {
             echo "CD SUCCESS: ${params.IMAGE_REPO}:${params.IMAGE_TAG}"
         }
+
         failure {
             echo 'CD FAILED: Periksa Console Output Jenkins.'
         }
