@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         REGISTRY         = 'docker.io'
-        API_DOCKER_DEV   = 'credentials('API_DOCKER_DEV')'
+        API_DOCKER_DEV   = credentials('API_DOCKER_DEV')
         API_DOCKER_PROD  = credentials('API_DOCKER_PROD')
     }
 
