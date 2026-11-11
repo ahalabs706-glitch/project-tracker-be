@@ -1,0 +1,4 @@
+CREATE TABLE seed_runs (
+    seed_key VARCHAR(100) PRIMARY KEY,
+    applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

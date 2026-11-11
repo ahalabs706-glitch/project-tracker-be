@@ -1,0 +1,149 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: projectflow-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-projectflow}
+      POSTGRES_USER: ${POSTGRES_USER:-projectflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-projectflow_dev}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-projectflow} -d ${POSTGRES_DB:-projectflow}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - projectflow-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: projectflow-redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-local-redis-development-only}"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-local-redis-development-only}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - projectflow-network
+
+  db-setup:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: projectflow-db-setup
+    entrypoint: ["/usr/local/bin/projectflow-db"]
+    command: ["up"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_DB: ${REDIS_DB:-0}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-}
+      DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - projectflow-network
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: projectflow-api
+    environment:
+      APP_PORT: "4000"
+      APP_ENV: ${APP_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_DB: ${REDIS_DB:-0}
+    ports:
+      - "${APP_PORT:-4400}:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - projectflow-network
+    stop_grace_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: projectflow-worker
+    entrypoint: ["/usr/local/bin/projectflow-worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_DB: ${REDIS_DB:-0}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    networks:
+      - projectflow-network
+    stop_grace_period: 30s
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+
+networks:
+  projectflow-network:
+    driver: bridge

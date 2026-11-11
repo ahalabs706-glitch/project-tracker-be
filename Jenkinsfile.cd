@@ -1,0 +1,555 @@
+pipeline {
+
+    agent any
+
+    environment {
+        REGISTRY              = 'docker.io'
+        API_DOCKER_DEV        = credentials('API_DOCKER_DEV')
+        API_DOCKER_PROD       = credentials('API_DOCKER_PROD')
+        REGISTRY_CREDENTIALS  = credentials('DOCKER_REGISTRY_CREDENTIALS')
+        DEPLOYMENT_SERVER_DEV = credentials('DEPLOYMENT_SERVER_DEV')
+        DEPLOYMENT_SERVER_PROD = credentials('DEPLOYMENT_SERVER_PROD')
+        SSH_PRIVATE_KEY       = credentials('SSH_PRIVATE_KEY')
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+        buildDiscarder(
+            logRotator(
+                numToKeepStr: '10'
+            )
+        )
+        timeout(time: 45, unit: 'MINUTES')
+    }
+
+    stages {
+
+        // ==========================================
+        // 1. Checkout Code
+        // ==========================================
+
+        stage('Checkout') {
+            steps {
+                cleanWs()
+                checkout scm
+
+                script {
+                    env.AUTHOR_NAME = sh(
+                        script: 'git log -1 --format=%aN',
+                        returnStdout: true
+                    ).trim()
+
+                    env.COMMIT_HASH = sh(
+                        script: 'git log -1 --format=%h',
+                        returnStdout: true
+                    ).trim()
+
+                    env.COMMIT_MESSAGE = sh(
+                        script: 'git log -1 --format=%s',
+                        returnStdout: true
+                    ).trim()
+
+                    env.BUILD_TIMESTAMP = sh(
+                        script: 'date -u +"%Y-%m-%dT%H:%M:%SZ"',
+                        returnStdout: true
+                    ).trim()
+
+                    echo """
+                    ==========================================
+                    CHECKOUT INFO
+                    ==========================================
+                    Branch          : ${env.BRANCH_NAME}
+                    Commit Hash     : ${env.COMMIT_HASH}
+                    Author          : ${env.AUTHOR_NAME}
+                    Message         : ${env.COMMIT_MESSAGE}
+                    Build Number    : ${env.BUILD_NUMBER}
+                    Timestamp       : ${env.BUILD_TIMESTAMP}
+                    ==========================================
+                    """
+                }
+            }
+        }
+
+        // ==========================================
+        // 2. Validate Branch & Environment
+        // ==========================================
+
+        stage('Validate Branch & Environment') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    if (env.BRANCH_NAME == 'main') {
+                        env.DEPLOY_ENV = 'production'
+                        env.API_DOCKER_REPO = env.API_DOCKER_PROD
+                        env.DEPLOYMENT_SERVER = env.DEPLOYMENT_SERVER_PROD
+                        env.DOCKER_USERNAME = credentials('DOCKER_PROD_USERNAME')
+                        env.DOCKER_PASSWORD = credentials('DOCKER_PROD_PASSWORD')
+                    } else if (env.BRANCH_NAME == 'develop') {
+                        env.DEPLOY_ENV = 'development'
+                        env.API_DOCKER_REPO = env.API_DOCKER_DEV
+                        env.DEPLOYMENT_SERVER = env.DEPLOYMENT_SERVER_DEV
+                        env.DOCKER_USERNAME = credentials('DOCKER_DEV_USERNAME')
+                        env.DOCKER_PASSWORD = credentials('DOCKER_DEV_PASSWORD')
+                    }
+
+                    echo """
+                    ==========================================
+                    DEPLOYMENT CONFIGURATION
+                    ==========================================
+                    Branch              : ${env.BRANCH_NAME}
+                    Environment         : ${env.DEPLOY_ENV}
+                    Docker Repository   : ${env.API_DOCKER_REPO}
+                    Deployment Server   : ${env.DEPLOYMENT_SERVER}
+                    ==========================================
+                    """
+                }
+            }
+        }
+
+        // ==========================================
+        // 3. Load Image Metadata
+        // ==========================================
+
+        stage('Load Metadata') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    // Fallback ke BUILD_NUMBER jika file properties tidak ada
+                    if (fileExists('image.properties')) {
+                        load 'image.properties'
+                    } else {
+                        env.IMAGE_TAG = env.BUILD_NUMBER
+                        env.IMAGE_COMMIT = env.COMMIT_HASH
+                        env.IMAGE_BRANCH = env.BRANCH_NAME
+                        env.IMAGE_REGISTRY = env.API_DOCKER_REPO
+                    }
+
+                    echo """
+                    ==========================================
+                    IMAGE METADATA
+                    ==========================================
+                    Tag             : ${env.IMAGE_TAG}
+                    Commit          : ${env.IMAGE_COMMIT}
+                    Branch          : ${env.IMAGE_BRANCH}
+                    Registry        : ${env.IMAGE_REGISTRY}
+                    ==========================================
+                    """
+                }
+            }
+        }
+
+        // ==========================================
+        // 4. Docker Login
+        // ==========================================
+
+        stage('Docker Login') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Authenticating to Docker Registry"
+                        echo "=========================================="
+                        
+                        echo "${DOCKER_PASSWORD}" | docker login -u "${DOCKER_USERNAME}" --password-stdin ${REGISTRY}
+                        
+                        echo "✓ Successfully logged in to Docker registry"
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 5. Build Docker Image
+        // ==========================================
+
+        stage('Build Image') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Building Docker Image for ${DEPLOY_ENV}"
+                        echo "=========================================="
+                        
+                        docker build \
+                            --build-arg BUILD_NUMBER=${BUILD_NUMBER} \
+                            --build-arg COMMIT_HASH=${COMMIT_HASH} \
+                            --build-arg BUILD_TIMESTAMP=${BUILD_TIMESTAMP} \
+                            -t ${API_DOCKER_REPO}:${BUILD_NUMBER} \
+                            -t ${API_DOCKER_REPO}:${COMMIT_HASH} \
+                            -t ${API_DOCKER_REPO}:latest \
+                            .
+                        
+                        echo "✓ Docker image built successfully"
+                        docker images | grep ${API_DOCKER_REPO}
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 6. Scan Docker Image
+        // ==========================================
+
+        stage('Scan Image') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Scanning Docker Image for Vulnerabilities"
+                        echo "=========================================="
+                        
+                        if ! command -v trivy &> /dev/null; then
+                            echo "⚠ Trivy not installed, skipping image scan"
+                        else
+                            trivy image \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 0 \
+                                ${API_DOCKER_REPO}:${BUILD_NUMBER} || true
+                        fi
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 7. Push to Docker Registry
+        // ==========================================
+
+        stage('Push to Registry') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Pushing Image to Registry"
+                        echo "=========================================="
+                        
+                        docker push ${API_DOCKER_REPO}:${BUILD_NUMBER}
+                        docker push ${API_DOCKER_REPO}:${COMMIT_HASH}
+                        docker push ${API_DOCKER_REPO}:latest
+                        
+                        echo "✓ Successfully pushed to registry"
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 8. Update Deployment Configuration
+        // ==========================================
+
+        stage('Update Deployment Config') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Creating Deployment Manifest"
+                        echo "=========================================="
+                        
+                        cat > deployment-manifest.env << EOF
+                        # ==========================================
+                        # Deployment Configuration
+                        # ==========================================
+                        DEPLOY_ENV=${DEPLOY_ENV}
+                        DOCKER_IMAGE=${API_DOCKER_REPO}:${BUILD_NUMBER}
+                        IMAGE_TAG=${BUILD_NUMBER}
+                        COMMIT_HASH=${COMMIT_HASH}
+                        BUILD_NUMBER=${BUILD_NUMBER}
+                        BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+                        BRANCH_NAME=${BRANCH_NAME}
+                        AUTHOR=${AUTHOR_NAME}
+                        
+                        # Docker Compose Configuration
+                        COMPOSE_PROJECT_NAME=projectflow-${DEPLOY_ENV}
+                        POSTGRES_DB=projectflow
+                        POSTGRES_USER=projectflow
+                        
+                        # Redis Configuration
+                        REDIS_PASSWORD=${REDIS_PASSWORD}
+                        
+                        # Application Configuration
+                        APP_ENV=${DEPLOY_ENV}
+                        APP_PORT=4000
+                        FRONTEND_PORT=80
+                        EOF
+                        
+                        echo "✓ Deployment manifest created"
+                        cat deployment-manifest.env
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 9. Deploy to Development Server
+        // ==========================================
+
+        stage('Deploy to Dev') {
+            when {
+                branch 'develop'
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Deploying to Development"
+                        echo "=========================================="
+                        
+                        # Setup SSH key
+                        mkdir -p ~/.ssh
+                        echo "${SSH_PRIVATE_KEY}" | base64 -d > ~/.ssh/deploy_key
+                        chmod 600 ~/.ssh/deploy_key
+                        
+                        # SSH Configuration
+                        ssh-keyscan -H ${DEPLOYMENT_SERVER} >> ~/.ssh/known_hosts 2>/dev/null || true
+                        
+                        # Deploy via SSH
+                        ssh -i ~/.ssh/deploy_key deployer@${DEPLOYMENT_SERVER} << 'DEPLOY_SCRIPT'
+                        set -e
+                        
+                        echo "Pulling latest configuration..."
+                        cd /opt/projectflow/backend || exit 1
+                        
+                        # Update docker-compose
+                        docker-compose pull
+                        docker-compose up -d
+                        
+                        echo "Waiting for services to be healthy..."
+                        sleep 10
+                        
+                        # Health check
+                        docker-compose ps
+                        
+                        # Check API health
+                        curl -f http://localhost:4000/health || exit 1
+                        
+                        echo "✓ Development deployment completed"
+                        DEPLOY_SCRIPT
+                        
+                        # Cleanup
+                        rm ~/.ssh/deploy_key || true
+                        
+                        echo "✓ Successfully deployed to development"
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 10. Deploy to Production Server (Manual Approval)
+        // ==========================================
+
+        stage('Deploy to Production') {
+            when {
+                branch 'main'
+            }
+            steps {
+                script {
+                    // Request approval
+                    def userInput = input(
+                        id: 'ProductionDeploy',
+                        message: """
+                        ╔════════════════════════════════════════════════╗
+                        ║     PRODUCTION DEPLOYMENT APPROVAL             ║
+                        ╚════════════════════════════════════════════════╝
+                        
+                        Are you sure you want to deploy to PRODUCTION?
+                        
+                        Image   : ${API_DOCKER_REPO}:${BUILD_NUMBER}
+                        Commit  : ${COMMIT_HASH}
+                        Author  : ${AUTHOR_NAME}
+                        Message : ${COMMIT_MESSAGE}
+                        """,
+                        ok: 'Deploy to Production'
+                    )
+
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Deploying to Production"
+                        echo "=========================================="
+                        
+                        # Setup SSH key
+                        mkdir -p ~/.ssh
+                        echo "${SSH_PRIVATE_KEY}" | base64 -d > ~/.ssh/deploy_key
+                        chmod 600 ~/.ssh/deploy_key
+                        
+                        # SSH Configuration
+                        ssh-keyscan -H ${DEPLOYMENT_SERVER} >> ~/.ssh/known_hosts 2>/dev/null || true
+                        
+                        # Deploy via SSH
+                        ssh -i ~/.ssh/deploy_key deployer@${DEPLOYMENT_SERVER} << 'DEPLOY_SCRIPT'
+                        set -e
+                        
+                        echo "Pulling latest configuration..."
+                        cd /opt/projectflow/backend || exit 1
+                        
+                        # Create backup
+                        echo "Creating backup..."
+                        docker-compose exec -T postgres pg_dump -U projectflow projectflow | gzip > /backups/db_backup_${COMMIT_HASH}.sql.gz
+                        
+                        # Update docker-compose
+                        docker-compose pull
+                        docker-compose up -d
+                        
+                        echo "Waiting for services to be healthy..."
+                        sleep 15
+                        
+                        # Health check
+                        docker-compose ps
+                        
+                        # Check API health
+                        curl -f http://localhost:4000/health || exit 1
+                        
+                        echo "✓ Production deployment completed"
+                        DEPLOY_SCRIPT
+                        
+                        # Cleanup
+                        rm ~/.ssh/deploy_key || true
+                        
+                        echo "✓ Successfully deployed to production"
+                    '''
+                }
+            }
+        }
+
+        // ==========================================
+        // 11. Post-Deployment Health Check
+        // ==========================================
+
+        stage('Health Check') {
+            when {
+                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+            }
+            steps {
+                script {
+                    sh '''
+                        set -e
+                        
+                        echo "==========================================" 
+                        echo "Post-Deployment Health Check"
+                        echo "=========================================="
+                        
+                        sleep 5
+                        
+                        # SSH Health check
+                        mkdir -p ~/.ssh
+                        echo "${SSH_PRIVATE_KEY}" | base64 -d > ~/.ssh/deploy_key
+                        chmod 600 ~/.ssh/deploy_key
+                        
+                        ssh-keyscan -H ${DEPLOYMENT_SERVER} >> ~/.ssh/known_hosts 2>/dev/null || true
+                        
+                        ssh -i ~/.ssh/deploy_key deployer@${DEPLOYMENT_SERVER} << 'HEALTH_SCRIPT'
+                        set -e
+                        
+                        echo "Checking API health..."
+                        if curl -f http://localhost:4000/health > /dev/null 2>&1; then
+                            echo "✓ API is healthy"
+                        else
+                            echo "✗ API health check failed"
+                            exit 1
+                        fi
+                        
+                        echo "Checking database connectivity..."
+                        docker-compose exec -T postgres pg_isready -U projectflow || exit 1
+                        echo "✓ Database is accessible"
+                        
+                        echo "Checking Redis connectivity..."
+                        docker-compose exec -T redis redis-cli ping || exit 1
+                        echo "✓ Redis is accessible"
+                        
+                        HEALTH_SCRIPT
+                        
+                        rm ~/.ssh/deploy_key || true
+                        
+                        echo "✓ Health checks passed"
+                    '''
+                }
+            }
+        }
+
+    }
+
+    post {
+        always {
+            cleanWs()
+
+            echo """
+            ==========================================
+            Build Summary
+            ==========================================
+            Job Name    : ${env.JOB_NAME}
+            Build #     : ${env.BUILD_NUMBER}
+            Status      : ${currentBuild.result}
+            Duration    : ${currentBuild.durationString}
+            ==========================================
+            """
+        }
+
+        success {
+            echo """
+            ╔════════════════════════════════════════╗
+            ║     ✓ CD Pipeline Completed            ║
+            ║     Branch: ${env.BRANCH_NAME}
+            ║     Environment: ${env.DEPLOY_ENV}
+            ║     Build: ${env.BUILD_NUMBER}
+            ╚════════════════════════════════════════╝
+            """
+        }
+
+        failure {
+            echo """
+            ╔════════════════════════════════════════╗
+            ║     ✗ CD Pipeline Failed               ║
+            ║     Branch: ${env.BRANCH_NAME}
+            ║     Build: ${env.BUILD_NUMBER}
+            ║     Commit: ${env.COMMIT_HASH}
+            ╚════════════════════════════════════════╝
+            """
+        }
+
+        unstable {
+            echo """
+            ╔════════════════════════════════════════╗
+            ║     ⚠ CD Pipeline Unstable             ║
+            ║     Branch: ${env.BRANCH_NAME}
+            ║     Build: ${env.BUILD_NUMBER}
+            ╚════════════════════════════════════════╝
+            """
+        }
+    }
+
+}

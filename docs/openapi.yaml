@@ -1,0 +1,1541 @@
+openapi: 3.0.3
+info:
+  title: ProjectFlow API
+  version: 1.0.0
+  license:
+    name: Proprietary
+  description: |
+    OpenAPI contract for currently implemented ProjectFlow backend endpoints.
+    Request and response envelopes follow api_contract.md. Routes documented in
+    the product contract but not yet implemented are intentionally excluded.
+servers:
+  - url: http://127.0.0.1:4000/api/v1
+    description: Local API
+tags:
+  - name: Health
+    description: Process and dependency health checks.
+  - name: Authentication
+    description: Login, token rotation, logout, and current-user operations.
+  - name: Users
+    description: User administration.
+  - name: Departments
+    description: Department administration.
+  - name: Projects
+    description: Project and project-member management.
+  - name: Contracts
+    description: Contract management and renewal history.
+  - name: Tasks
+    description: Project task management.
+  - name: Milestones
+    description: Project milestone management.
+  - name: Budgets
+    description: Budget allocation and transaction operations.
+  - name: Dashboard
+    description: Scoped dashboard aggregations.
+  - name: Notifications
+    description: User-scoped in-app notification operations.
+  - name: Audit
+    description: Filterable append-only audit history.
+paths:
+  /health:
+    servers:
+      - url: http://127.0.0.1:4000
+    get:
+      tags: [Health]
+      operationId: getHealth
+      summary: Check API process health
+      security: []
+      responses:
+        "200":
+          description: API process is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /ready:
+    servers:
+      - url: http://127.0.0.1:4000
+    get:
+      tags: [Health]
+      operationId: getReadiness
+      summary: Check database readiness
+      security: []
+      responses:
+        "200":
+          description: API and database are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/login:
+    post:
+      tags: [Authentication]
+      operationId: login
+      summary: Authenticate with email and password
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      operationId: refreshToken
+      summary: Rotate the refresh token
+      description: Requires the HttpOnly refresh-token cookie and trusted Origin header.
+      security: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      operationId: logout
+      summary: Revoke the current refresh token
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /auth/me:
+    get:
+      tags: [Authentication]
+      operationId: getCurrentUser
+      summary: Return the authenticated user and permissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /users:
+    get:
+      tags: [Users]
+      operationId: listUsers
+      summary: List users
+      security:
+        - bearerAuth: []
+      x-required-permission: users.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: department_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: is_active
+          in: query
+          schema: { type: boolean }
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [Users]
+      operationId: createUser
+      summary: Create a user and assign roles
+      security:
+        - bearerAuth: []
+      x-required-permission: users.create
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /users/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Users]
+      operationId: getUser
+      summary: Get a user
+      security:
+        - bearerAuth: []
+      x-required-permission: users.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Users]
+      operationId: updateUser
+      summary: Update user details and roles
+      security:
+        - bearerAuth: []
+      x-required-permission: users.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /users/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Users]
+      operationId: setUserStatus
+      summary: Activate or deactivate a user
+      security:
+        - bearerAuth: []
+      x-required-permission: users.deactivate
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /roles:
+    get:
+      tags: [Users]
+      operationId: listAssignableRoles
+      summary: List roles assignable to users
+      security:
+        - bearerAuth: []
+      x-required-permission: users.read
+      description: Administrator roles are included only for SUPER_ADMIN callers.
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /role-permissions:
+    get:
+      tags: [Users]
+      operationId: listRolePermissions
+      summary: List global role permissions
+      description: SUPER_ADMIN only. SUPER_ADMIN permissions are returned locked and cannot be changed.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /roles/{id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    put:
+      tags: [Users]
+      operationId: updateRolePermissions
+      summary: Replace a global role's permissions
+      description: SUPER_ADMIN only. The SUPER_ADMIN role is immutable.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /departments:
+    get:
+      tags: [Departments]
+      operationId: listDepartments
+      summary: List departments
+      security:
+        - bearerAuth: []
+      x-required-permission: departments.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Departments]
+      operationId: createDepartment
+      summary: Create a department
+      security:
+        - bearerAuth: []
+      x-required-permission: departments.create
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /departments/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Departments]
+      operationId: getDepartment
+      summary: Get a department
+      security:
+        - bearerAuth: []
+      x-required-permission: departments.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Departments]
+      operationId: updateDepartment
+      summary: Update a department
+      security:
+        - bearerAuth: []
+      x-required-permission: departments.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /departments/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Departments]
+      operationId: setDepartmentStatus
+      summary: Activate or deactivate a department
+      security:
+        - bearerAuth: []
+      x-required-permission: departments.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects:
+    get:
+      tags: [Projects]
+      operationId: listProjects
+      summary: List and filter projects
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: department_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: manager_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: priority
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Projects]
+      operationId: createProject
+      summary: Create a project
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.create
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Projects]
+      operationId: getProject
+      summary: Get project details
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Projects]
+      operationId: updateProject
+      summary: Update a project
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Projects]
+      operationId: setProjectStatus
+      summary: Change project status
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects/{id}/progress:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Projects]
+      operationId: setProjectProgress
+      summary: Update project progress
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/archive:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    post:
+      tags: [Projects]
+      operationId: archiveProject
+      summary: Archive a project
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.archive
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Projects]
+      operationId: listProjectMembers
+      summary: List project members
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Projects]
+      operationId: addProjectMember
+      summary: Add a project member
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/members/{user_id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+      - name: user_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [Projects]
+      operationId: removeProjectMember
+      summary: Remove a project member
+      security:
+        - bearerAuth: []
+      x-required-permission: projects.update
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Projects]
+      operationId: getEffectiveProjectPermissions
+      summary: Get the current user's effective project permissions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /projects/{id}/role-permissions:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Projects]
+      operationId: listProjectRolePermissions
+      summary: List project-role permission sets
+      description: Project owner or manager with projects.update permission.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    put:
+      tags: [Projects]
+      operationId: updateProjectRolePermissions
+      summary: Replace a project role's permission set
+      description: Project owner or manager with projects.update permission. Only task and milestone permissions are configurable.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /contracts:
+    get:
+      tags: [Contracts]
+      operationId: listContracts
+      summary: List and filter contracts
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: search
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string }
+        - name: department_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: owner_id
+          in: query
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Contracts]
+      operationId: createContract
+      summary: Create a contract
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.create
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /contracts/expiring:
+    get:
+      tags: [Contracts]
+      operationId: listExpiringContracts
+      summary: List contracts expiring within the selected period
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: within_days
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /contracts/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Contracts]
+      operationId: getContract
+      summary: Get contract details and history
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Contracts]
+      operationId: updateContract
+      summary: Update a contract
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.update
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /contracts/{id}/renewals:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Contracts]
+      operationId: listContractRenewals
+      summary: List contract renewals
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Contracts]
+      operationId: renewContract
+      summary: Renew a contract
+      security:
+        - bearerAuth: []
+      x-required-permission: contracts.renew
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Tasks]
+      operationId: listProjectTasks
+      summary: List tasks for a project
+      description: Requires tasks.read in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Tasks]
+      operationId: createTask
+      summary: Create a project task
+      description: Requires tasks.create in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/task-assignees:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Tasks]
+      operationId: listProjectTaskAssignees
+      summary: List eligible assignees for a project
+      description: Requires tasks.assign in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /tasks/my:
+    get:
+      tags: [Tasks]
+      operationId: listMyTasks
+      summary: List tasks assigned to the current user
+      security:
+        - bearerAuth: []
+      x-required-permission: tasks.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tasks/overdue:
+    get:
+      tags: [Tasks]
+      operationId: listOverdueTasks
+      summary: List overdue tasks
+      security:
+        - bearerAuth: []
+      x-required-permission: tasks.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tasks/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Tasks]
+      operationId: getTask
+      summary: Get a task
+      description: Requires tasks.read in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Tasks]
+      operationId: updateTask
+      summary: Update a task
+      description: Requires tasks.update in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tasks/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Tasks]
+      operationId: setTaskStatus
+      summary: Update task status
+      security:
+        - bearerAuth: []
+      description: Requires tasks.update in the caller's effective project permissions.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /tasks/{id}/assignees:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Tasks]
+      operationId: setTaskAssignees
+      summary: Replace a task's assignees
+      description: Requires tasks.assign in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /tasks/{id}/progress:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Tasks]
+      operationId: setTaskProgress
+      summary: Update task progress
+      security:
+        - bearerAuth: []
+      description: Requires tasks.update in the caller's effective project permissions.
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/milestones:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Milestones]
+      operationId: listProjectMilestones
+      summary: List project milestones
+      description: Requires milestones.read in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Milestones]
+      operationId: createMilestone
+      summary: Create a project milestone
+      description: Requires milestones.create in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /milestones/upcoming:
+    get:
+      tags: [Milestones]
+      operationId: listUpcomingMilestones
+      summary: List upcoming milestones
+      security:
+        - bearerAuth: []
+      x-required-permission: milestones.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /milestones/delayed:
+    get:
+      tags: [Milestones]
+      operationId: listDelayedMilestones
+      summary: List delayed milestones
+      security:
+        - bearerAuth: []
+      x-required-permission: milestones.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /milestones/{id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Milestones]
+      operationId: getMilestone
+      summary: Get a milestone
+      description: Requires milestones.read in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Milestones]
+      operationId: updateMilestone
+      summary: Update a milestone
+      description: Requires milestones.update in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /milestones/{id}/status:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Milestones]
+      operationId: setMilestoneStatus
+      summary: Update milestone status and actual date
+      description: Requires milestones.update in the caller's effective project permissions.
+      security:
+        - bearerAuth: []
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /budget-categories:
+    get:
+      tags: [Budgets]
+      operationId: listBudgetCategories
+      summary: List budget categories
+      security:
+        - bearerAuth: []
+      x-required-permission: budgets.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/budget:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Budgets]
+      operationId: getBudgetSummary
+      summary: Get project budget summary
+      security:
+        - bearerAuth: []
+      x-required-permission: budgets.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/budget/allocations:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Budgets]
+      operationId: listBudgetAllocations
+      summary: List project budget allocations
+      security:
+        - bearerAuth: []
+      x-required-permission: budgets.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Budgets]
+      operationId: createBudgetAllocation
+      summary: Create a budget allocation
+      security:
+        - bearerAuth: []
+      x-required-permission: budgets.manage
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/budget/allocations/{budget_id}:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+      - name: budget_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [Budgets]
+      operationId: updateBudgetAllocation
+      summary: Update a budget allocation
+      security:
+        - bearerAuth: []
+      x-required-permission: budgets.manage
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /projects/{id}/budget/transactions:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    get:
+      tags: [Budgets]
+      operationId: listBudgetTransactions
+      summary: List project budget transactions
+      security:
+        - bearerAuth: []
+      x-required-permission: budget_transactions.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Budgets]
+      operationId: createBudgetTransaction
+      summary: Create a budget transaction
+      security:
+        - bearerAuth: []
+      x-required-permission: budget_transactions.create
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /budget/transactions/{id}/post:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    post:
+      tags: [Budgets]
+      operationId: postBudgetTransaction
+      summary: Post a draft budget transaction
+      security:
+        - bearerAuth: []
+      x-required-permission: budget_transactions.post
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /budget/transactions/{id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    post:
+      tags: [Budgets]
+      operationId: cancelBudgetTransaction
+      summary: Cancel a draft budget transaction
+      security:
+        - bearerAuth: []
+      x-required-permission: budget_transactions.cancel
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /budget/transactions/{id}/correct:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    post:
+      tags: [Budgets]
+      operationId: correctBudgetTransaction
+      summary: Correct a posted budget transaction
+      security:
+        - bearerAuth: []
+      x-required-permission: budget_transactions.post
+      requestBody:
+        $ref: "#/components/requestBodies/JsonObject"
+      responses:
+        "201":
+          $ref: "#/components/responses/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/overview:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardOverview
+      summary: Get dashboard overview aggregates
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/project-status:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardProjectStatus
+      summary: Aggregate projects by status
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/contract-expiration:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardContractExpiration
+      summary: Aggregate contract expiration dates
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/budget-overview:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardBudgetOverview
+      summary: Aggregate budget overview by currency
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/critical-alerts:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardCriticalAlerts
+      summary: List critical dashboard alerts
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/upcoming-milestones:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardUpcomingMilestones
+      summary: List upcoming dashboard milestones
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /dashboard/overdue-tasks:
+    get:
+      tags: [Dashboard]
+      operationId: getDashboardOverdueTasks
+      summary: List overdue dashboard tasks
+      description: Each task includes its current progress percentage and assigned user names.
+      security:
+        - bearerAuth: []
+      x-required-permission: dashboard.read
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /notifications:
+    get:
+      tags: [Notifications]
+      operationId: listNotifications
+      summary: List notifications for the current user
+      security:
+        - bearerAuth: []
+      x-required-permission: notifications.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      operationId: getUnreadNotificationCount
+      summary: Count unread notifications for the current user
+      security:
+        - bearerAuth: []
+      x-required-permission: notifications.read
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /notifications/{id}/read:
+    parameters:
+      - $ref: "#/components/parameters/UUID"
+    patch:
+      tags: [Notifications]
+      operationId: markNotificationRead
+      summary: Mark a notification as read
+      security:
+        - bearerAuth: []
+      x-required-permission: notifications.update
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /notifications/read-all:
+    patch:
+      tags: [Notifications]
+      operationId: markAllNotificationsRead
+      summary: Mark all current-user notifications as read
+      security:
+        - bearerAuth: []
+      x-required-permission: notifications.update
+      responses:
+        "200":
+          $ref: "#/components/responses/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /audit-logs:
+    get:
+      tags: [Audit]
+      operationId: listAuditLogs
+      summary: List append-only audit events
+      security:
+        - bearerAuth: []
+      x-required-permission: audit_logs.read
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PerPage"
+        - name: actor_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: action
+          in: query
+          schema: { type: string, maxLength: 100 }
+        - name: entity_type
+          in: query
+          schema: { type: string, pattern: "^[A-Z][A-Z0-9_]{0,49}$" }
+        - name: entity_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: date_from
+          in: query
+          description: Inclusive start date in the YYYY-MM-DD format.
+          schema: { type: string, format: date }
+        - name: date_to
+          in: query
+          description: Inclusive end date in the YYYY-MM-DD format.
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          $ref: "#/components/responses/PaginatedSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UUID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+  requestBodies:
+    JsonObject:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    Success:
+      description: Operation succeeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Success"
+    PaginatedSuccess:
+      description: Paginated operation succeeded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/PaginatedSuccess"
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Authentication required or invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Insufficient permission
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ServiceUnavailable:
+      description: Dependency unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    HealthResponse:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string }
+        data:
+          type: object
+          properties:
+            status: { type: string, enum: [ok] }
+    Success:
+      type: object
+      required: [success, message, data]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string }
+        data: {}
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+    PaginatedSuccess:
+      type: object
+      required: [success, message, data, meta]
+      properties:
+        success: { type: boolean, example: true }
+        message: { type: string }
+        data:
+          type: array
+          items: {}
+        meta:
+          $ref: "#/components/schemas/PaginationMeta"
+    PaginationMeta:
+      type: object
+      required: [page, per_page, total, total_pages]
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+    Error:
+      type: object
+      required: [success, message, error]
+      properties:
+        success: { type: boolean, example: false }
+        message: { type: string }
+        error:
+          type: object
+          required: [code, details]
+          properties:
+            code: { type: string }
+            details:
+              type: array
+              items: {}
