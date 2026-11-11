@@ -69,7 +69,7 @@ pipeline {
 
         stage('Validate Branch') {
             when {
-                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
             }
             steps {
                 script {
@@ -254,7 +254,7 @@ pipeline {
 
         stage('Integration Test') {
             when {
-                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
             }
             steps {
                 script {
@@ -300,7 +300,7 @@ pipeline {
 
         stage('Prepare Metadata') {
             when {
-                branch pattern: "^(develop|main)$", comparator: "REGEXP"
+                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
             }
             steps {
                 script {
