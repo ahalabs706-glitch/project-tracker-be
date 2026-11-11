@@ -4,7 +4,7 @@ pipeline {
 
     environment {
         REGISTRY         = 'docker.io'
-        API_DOCKER_DEV   = credentials('API_DOCKER_DEV')
+        API_DOCKER_DEV   = 'credentials('API_DOCKER_DEV')'
         API_DOCKER_PROD  = credentials('API_DOCKER_PROD')
     }
 
@@ -63,13 +63,13 @@ pipeline {
 
                     if (env.BRANCH_NAME == 'main') {
 
-                        env.DOCKER_NAME = env.DOCKER_PROD
+                        env.DOCKER_NAME = env.API_DOCKER_PROD
 
                         env.DEPLOY_ENV = 'production'
 
                     } else if (env.BRANCH_NAME == 'develop') {
 
-                        env.DOCKER_NAME = env.DOCKER_DEV
+                        env.DOCKER_NAME = env.API_DOCKER_DEV
 
                         env.DEPLOY_ENV = 'dev'
 
