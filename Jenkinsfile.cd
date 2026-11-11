@@ -90,6 +90,21 @@ pipeline {
 
         stage('Deploy to Ubuntu') {
             steps {
+                sshagent(credentials: ['deploy-ssh-key']) {
+                    sh '''
+                        set -eux
+
+                        echo "Checking loaded SSH identities..."
+                        ssh-add -l
+
+                        echo "Testing SSH connection..."
+                        ssh -vvv \
+                            -o BatchMode=yes \
+                            ubuntu@16.178.138.2 \
+                            "whoami"
+                    '''
+                }
+
                 sshagent(credentials: [env.SSH_CREDENTIALS_ID]) {
 
                     withCredentials([
