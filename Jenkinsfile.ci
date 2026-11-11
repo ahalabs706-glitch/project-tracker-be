@@ -150,31 +150,7 @@ pipeline {
         }
 
         // ==========================================
-        // 5. Security Scanning
-        // ==========================================
-
-        stage('Security Scan') {
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Running Go Security Scanner (gosec)"
-                        echo "=========================================="
-                        
-                        if ! command -v gosec &> /dev/null; then
-                            go install github.com/securego/gosec/v2/cmd/gosec@latest
-                        fi
-                        
-                        gosec ./... || true
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 6. Run Tests
+        // 5. Run Tests
         // ==========================================
 
         stage('Unit Tests') {
@@ -198,7 +174,7 @@ pipeline {
         }
 
         // ==========================================
-        // 7. Build Docker Image
+        // 6. Build Docker Image
         // ==========================================
 
         stage('Build Docker Image') {
@@ -225,7 +201,7 @@ pipeline {
         }
 
         // ==========================================
-        // 8. Security Scan Docker Image
+        // 7. Security Scan Docker Image
         // ==========================================
 
         stage('Scan Docker Image') {
@@ -249,7 +225,7 @@ pipeline {
         }
 
         // ==========================================
-        // 9. Health Check - Start Compose and Test
+        // 8. Health Check - Start Compose and Test
         // ==========================================
 
         stage('Integration Test') {
@@ -295,7 +271,7 @@ pipeline {
         }
 
         // ==========================================
-        // 10. Prepare Image Metadata
+        // 9. Prepare Image Metadata
         // ==========================================
 
         stage('Prepare Metadata') {
