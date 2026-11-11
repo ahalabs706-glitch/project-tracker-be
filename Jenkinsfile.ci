@@ -24,7 +24,7 @@ pipeline {
     stages {
 
         // ==========================================
-        // 1. Checkout Code
+        // 1. Checkout
         // ==========================================
 
         stage('Checkout') {
@@ -38,268 +38,262 @@ pipeline {
                         returnStdout: true
                     ).trim()
 
-                    env.COMMIT_HASH = sh(
-                        script: 'git log -1 --format=%h',
-                        returnStdout: true
-                    ).trim()
-
                     env.COMMIT_MESSAGE = sh(
                         script: 'git log -1 --format=%s',
                         returnStdout: true
                     ).trim()
 
-                    echo """
-                    ==========================================
-                    CHECKOUT INFO
-                    ==========================================
-                    Branch          : ${env.BRANCH_NAME}
-                    Commit Hash     : ${env.COMMIT_HASH}
-                    Author          : ${env.AUTHOR_NAME}
-                    Message         : ${env.COMMIT_MESSAGE}
-                    Build Number    : ${env.BUILD_NUMBER}
-                    ==========================================
-                    """
+                    echo "Branch: ${env.BRANCH_NAME}"
+                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Author: ${env.AUTHOR_NAME}"
+                    echo "Message: ${env.COMMIT_MESSAGE}"
                 }
             }
         }
 
+
         // ==========================================
-        // 2. Validate Branch
+        // 2. Prepare Docker Image
         // ==========================================
 
-        stage('Validate Branch') {
-            when {
-                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
-            }
+        stage('Prepare Image') {
+
             steps {
+
                 script {
+
                     if (env.BRANCH_NAME == 'main') {
+
+                        env.DOCKER_NAME = env.DOCKER_PROD
+
                         env.DEPLOY_ENV = 'production'
-                        env.API_DOCKER_REPO = env.API_DOCKER_PROD
+
                     } else if (env.BRANCH_NAME == 'develop') {
-                        env.DEPLOY_ENV = 'development'
-                        env.API_DOCKER_REPO = env.API_DOCKER_DEV
+
+                        env.DOCKER_NAME = env.DOCKER_DEV
+
+                        env.DEPLOY_ENV = 'dev'
+
+                    } else {
+
+                        error(
+                            "Unsupported branch for CI/CD: ${env.BRANCH_NAME}"
+                        )
                     }
 
+                    env.IMAGE = "${env.DOCKER_NAME}:${env.BUILD_NUMBER}"
+
                     echo """
                     ==========================================
-                    ENVIRONMENT CONFIGURATION
+                    DOCKER IMAGE
                     ==========================================
-                    Branch          : ${env.BRANCH_NAME}
-                    Environment     : ${env.DEPLOY_ENV}
-                    Docker Repo     : ${env.API_DOCKER_REPO}
+
+                    Branch      : ${env.BRANCH_NAME}
+                    Environment : ${env.DEPLOY_ENV}
+                    Image       : ${env.IMAGE}
+
                     ==========================================
                     """
                 }
             }
         }
 
+
         // ==========================================
-        // 3. Setup Go Environment
+        // 3. Lint
         // ==========================================
 
-        stage('Setup Go') {
+        stage('Lint') {
+
             steps {
-                script {
+
+                sh '''
+
+                    set -e
+
+                    echo "=========================================="
+                    echo "Go Version"
+                    echo "=========================================="
+
+                    go version
+
+                    echo "=========================================="
+                    echo "Checking gofmt"
+                    echo "=========================================="
+
+                    if [ -n "$(gofmt -l .)" ]; then
+
+                        echo "ERROR: The following files are not formatted:"
+
+                        gofmt -l .
+
+                        echo ""
+
+                        echo "Please run:"
+
+                        echo "gofmt -w ."
+
+                        exit 1
+
+                    fi
+
+                    echo "gofmt passed."
+
+                    echo "=========================================="
+                    echo "Running go vet"
+                    echo "=========================================="
+
+                    go vet ./...
+
+                    echo "go vet passed."
+
+                    echo "=========================================="
+                    echo "Lint SUCCESS"
+                    echo "=========================================="
+                '''
+            }
+        }
+
+
+        // ==========================================
+        // 4. Unit Test
+        // ==========================================
+
+        stage('Unit Test') {
+
+            steps {
+
+                sh '''
+
+                    set -e
+
+                    echo "=========================================="
+                    echo "Running Unit Tests"
+                    echo "=========================================="
+
+                    go test ./... -v
+
+                    echo "=========================================="
+                    echo "Unit Test SUCCESS"
+                    echo "=========================================="
+                '''
+            }
+        }
+
+
+        // ==========================================
+        // 5. Build Docker Image
+        // ==========================================
+
+        stage('Build Image') {
+
+            steps {
+
+                sh '''
+
+                    set -e
+
+                    echo "=========================================="
+                    echo "Building Docker Image"
+                    echo "=========================================="
+
+                    echo "Image: ${IMAGE}"
+
+                    DOCKER_BUILDKIT=1 docker build \
+                        --pull \
+                        -t "${IMAGE}" \
+                        .
+
+                    echo "=========================================="
+                    echo "Docker Build SUCCESS"
+                    echo "=========================================="
+
+                    docker images "${DOCKER_NAME}"
+                '''
+            }
+        }
+
+
+        // ==========================================
+        // 6. Trivy Vulnerability Scan
+        // ==========================================
+
+        stage('Trivy Scan') {
+
+            steps {
+
+                sh '''
+
+                    set -e
+
+                    echo "=========================================="
+                    echo "Trivy Vulnerability Scan"
+                    echo "=========================================="
+
+                    trivy image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 1 \
+                        --ignore-unfixed \
+                        "${IMAGE}"
+
+                    echo "=========================================="
+                    echo "Trivy Scan SUCCESS"
+                    echo "=========================================="
+                '''
+            }
+        }
+
+
+        // ==========================================
+        // 7. Push Docker Image
+        // ==========================================
+
+        stage('Push Image') {
+
+            steps {
+
+                withCredentials([
+
+                    usernamePassword(
+                        credentialsId: 'dockerhub-credentials',
+                        usernameVariable: 'DOCKER_USERNAME',
+                        passwordVariable: 'DOCKER_PASSWORD'
+                    )
+
+                ]) {
+
                     sh '''
+
                         set -e
-                        
-                        echo "==========================================" 
-                        echo "Go Version Check"
+
                         echo "=========================================="
-                        go version
-                        
-                        echo "==========================================" 
-                        echo "Downloading Dependencies"
+                        echo "Docker Login"
                         echo "=========================================="
-                        go mod download
-                        go mod verify
+
+                        echo "${DOCKER_PASSWORD}" | docker login \
+                            "${REGISTRY}" \
+                            --username "${DOCKER_USERNAME}" \
+                            --password-stdin
+
+                        echo "=========================================="
+                        echo "Pushing Image"
+                        echo "=========================================="
+
+                        docker push "${IMAGE}"
+
+                        echo "=========================================="
+                        echo "Docker Logout"
+                        echo "=========================================="
+
+                        docker logout "${REGISTRY}"
+
+                        echo "=========================================="
+                        echo "Push SUCCESS"
+                        echo "=========================================="
                     '''
                 }
             }
         }
-
-        // ==========================================
-        // 4. Code Quality - Lint & Format Check
-        // ==========================================
-
-        stage('Lint & Format Check') {
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Running Go Vet"
-                        echo "=========================================="
-                        go vet ./...
-                        
-                        echo "==========================================" 
-                        echo "Checking Code Format with gofmt"
-                        echo "=========================================="
-                        if ! gofmt -l . | grep -q .; then
-                            echo "✓ Code is properly formatted"
-                        else
-                            echo "✗ Code formatting issues found:"
-                            gofmt -l .
-                            exit 1
-                        fi
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 5. Run Tests
-        // ==========================================
-
-        stage('Unit Tests') {
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Running Unit Tests"
-                        echo "=========================================="
-                        go test -v -coverprofile=coverage.out ./...
-                        
-                        echo "==========================================" 
-                        echo "Coverage Report"
-                        echo "=========================================="
-                        go tool cover -func=coverage.out | tail -n 1
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 6. Build Docker Image
-        // ==========================================
-
-        stage('Build Docker Image') {
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Building Docker Image"
-                        echo "=========================================="
-                        
-                        docker build \
-                            -t ${API_DOCKER_REPO}:${BUILD_NUMBER} \
-                            -t ${API_DOCKER_REPO}:latest \
-                            -t ${API_DOCKER_REPO}:${COMMIT_HASH} \
-                            .
-                        
-                        echo "✓ Docker image built successfully"
-                        docker images | grep ${API_DOCKER_REPO}
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 7. Security Scan Docker Image
-        // ==========================================
-
-        stage('Scan Docker Image') {
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Scanning Docker Image for Vulnerabilities"
-                        echo "=========================================="
-                        
-                        if ! command -v trivy &> /dev/null; then
-                            echo "⚠ Trivy not installed, skipping image scan"
-                        else
-                            trivy image --severity HIGH,CRITICAL ${API_DOCKER_REPO}:${BUILD_NUMBER} || true
-                        fi
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 8. Health Check - Start Compose and Test
-        // ==========================================
-
-        stage('Integration Test') {
-            when {
-                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
-            }
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Starting Docker Compose Stack"
-                        echo "=========================================="
-                        
-                        docker-compose -f docker-compose.yml up -d
-                        
-                        echo "Waiting for services to be healthy..."
-                        sleep 10
-                        
-                        echo "==========================================" 
-                        echo "Checking Service Health"
-                        echo "=========================================="
-                        docker-compose ps
-                        
-                        # Test API Health
-                        API_HEALTH=$(docker-compose exec -T api wget -q -O - http://localhost:4000/health || echo "FAILED")
-                        
-                        if [[ "$API_HEALTH" == *"FAILED"* ]]; then
-                            echo "✗ API health check failed"
-                            docker-compose logs api
-                            exit 1
-                        fi
-                        
-                        echo "✓ API is healthy"
-                        
-                        # Cleanup
-                        docker-compose down -v
-                        echo "✓ Stack cleaned up"
-                    '''
-                }
-            }
-        }
-
-        // ==========================================
-        // 9. Prepare Image Metadata
-        // ==========================================
-
-        stage('Prepare Metadata') {
-            when {
-                branch pattern: '^(develop|main)$', comparator: 'REGEXP'
-            }
-            steps {
-                script {
-                    sh '''
-                        set -e
-                        
-                        echo "==========================================" 
-                        echo "Image Metadata"
-                        echo "=========================================="
-                        
-                        echo "IMAGE_TAG=${BUILD_NUMBER}" > image.properties
-                        echo "IMAGE_COMMIT=${COMMIT_HASH}" >> image.properties
-                        echo "IMAGE_BRANCH=${BRANCH_NAME}" >> image.properties
-                        echo "IMAGE_REGISTRY=${API_DOCKER_REPO}" >> image.properties
-                        echo "BUILD_TIMESTAMP=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> image.properties
-                        
-                        echo "Properties file:"
-                        cat image.properties
-                    '''
-                }
-            }
-        }
-
     }
 
 
@@ -318,23 +312,23 @@ pipeline {
             ==========================================
             PIPELINE SUCCESS
             ==========================================
-            Application : devfolio
+            Application : projectflow-be
             Branch      : ${env.BRANCH_NAME}
             Build       : ${env.BUILD_NUMBER}
-            API Image   : ${env.API_IMAGE}
-            Web Image   : ${env.WEB_IMAGE}
+            Image       : ${env.IMAGE}
             Author      : ${env.AUTHOR_NAME}
             ==========================================
             """
 
             script {
-                def cdJob = "devfolio-cd/${env.BRANCH_NAME}"
+                def cdJob = "projectflow-cd/${env.BRANCH_NAME}"
 
                 echo """
                 ==========================================
                 TRIGGER CD
                 ==========================================
                 CD Job : ${cdJob}
+                Image  : ${env.IMAGE}
                 Tag    : ${env.BUILD_NUMBER}
                 ==========================================
                 """
@@ -342,12 +336,8 @@ pipeline {
                 build job: cdJob,
                     parameters: [
                         string(
-                            name: 'API_IMAGE_REPO',
-                            value: env.API_DOCKER_NAME
-                        ),
-                        string(
-                            name: 'WEB_IMAGE_REPO',
-                            value: env.WEB_DOCKER_NAME
+                            name: 'IMAGE_REPO',
+                            value: env.DOCKER_NAME
                         ),
                         string(
                             name: 'IMAGE_TAG',
@@ -369,7 +359,7 @@ pipeline {
             PIPELINE FAILED
             ==========================================
 
-            Application : devfolio
+            Application : projectflow-be
             Branch      : ${env.BRANCH_NAME}
             Build       : ${env.BUILD_NUMBER}
 
@@ -387,17 +377,16 @@ pipeline {
 
             script {
 
-                if (env.API_IMAGE && env.WEB_IMAGE) {
+                if (env.IMAGE) {
 
                     sh """
 
                         echo "=========================================="
-                        echo "Cleaning Local Docker Images"
+                        echo "Cleaning Local Docker Image"
                         echo "=========================================="
 
                         docker image rm \
-                            "${env.API_IMAGE}" \
-                            "${env.WEB_IMAGE}" \
+                            "${env.IMAGE}" \
                             || true
                     """
                 }
