@@ -1,3 +1,4 @@
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -5,16 +6,19 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-projectflow}
       POSTGRES_USER: ${POSTGRES_USER:-projectflow}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-projectflow_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-projectflow} -d ${POSTGRES_DB:-projectflow}"]
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"
       interval: 5s
       timeout: 5s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
     networks:
       - projectflow-network
@@ -22,38 +26,49 @@ services:
   redis:
     image: redis:7-alpine
     container_name: projectflow-redis
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:-local-redis-development-only}"]
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
     ports:
       - "${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-local-redis-development-only}", "ping"]
+      test:
+        - CMD-SHELL
+        - redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 5s
     restart: unless-stopped
     networks:
       - projectflow-network
 
   db-setup:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_REPO:?IMAGE_REPO is required}:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: projectflow-db-setup
     entrypoint: ["/usr/local/bin/projectflow-db"]
     command: ["up"]
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
-      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+
       REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_DB: ${REDIS_DB:-0}
+
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-}
       DEMO_USER_PASSWORD: ${DEMO_USER_PASSWORD:-}
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD:-}
@@ -67,21 +82,23 @@ services:
       - projectflow-network
 
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_REPO:?IMAGE_REPO is required}:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: projectflow-api
     environment:
       APP_PORT: "4000"
       APP_ENV: ${APP_ENV:-development}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
-      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+
       REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_DB: ${REDIS_DB:-0}
     ports:
       - "${APP_PORT:-4400}:4000"
@@ -93,10 +110,16 @@ services:
       db-setup:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      test:
+        - CMD
+        - wget
+        - -q
+        - --spider
+        - http://127.0.0.1:4000/health
       interval: 10s
       timeout: 3s
       retries: 5
+      start_period: 10s
     restart: unless-stopped
     networks:
       - projectflow-network
@@ -104,22 +127,25 @@ services:
     stop_grace_period: 15s
 
   worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ${IMAGE_REPO:?IMAGE_REPO is required}:${IMAGE_TAG:?IMAGE_TAG is required}
     container_name: projectflow-worker
     entrypoint: ["/usr/local/bin/projectflow-worker"]
     environment:
       APP_ENV: ${APP_ENV:-development}
       APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
-      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:-projectflow_dev}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://127.0.0.1:5175}
-      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-local-development-only-change-this-secret}
+
+      DATABASE_URL: postgres://${POSTGRES_USER:-projectflow}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-projectflow}?sslmode=disable
+
+      WEB_ORIGIN: ${WEB_ORIGIN:?WEB_ORIGIN is required}
+
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?JWT_ACCESS_SECRET is required}
       JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
       JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+
       REDIS_ADDR: redis:6379
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-local-redis-development-only}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
       REDIS_DB: ${REDIS_DB:-0}
+
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
@@ -140,11 +166,14 @@ services:
 volumes:
   postgres_data:
     driver: local
+
   redis_data:
     driver: local
 
 networks:
   projectflow-network:
     driver: bridge
+
   proxy-network:
-    driver: bridge
+    external: true
+    name: proxy-network
