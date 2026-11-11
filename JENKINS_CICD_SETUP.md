@@ -285,6 +285,11 @@ Pipeline akan fail jika:
 
 ## 🚀 CD Pipeline (`Jenkinsfile.cd`)
 
+Target deployment: branch `develop` uses host `16.178.138.2`, while
+`main` uses `3.27.25.5`. Both use the same SSH user, application
+directory, and Jenkins SSH credential configured in `Jenkinsfile.cd`.
+Other branches are rejected.
+
 ### Stages
 
 1. **Checkout**
