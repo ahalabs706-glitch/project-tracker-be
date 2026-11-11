@@ -6,7 +6,6 @@ pipeline {
         REGISTRY         = 'docker.io'
         API_DOCKER_DEV   = credentials('API_DOCKER_DEV')
         API_DOCKER_PROD  = credentials('API_DOCKER_PROD')
-        GO_VERSION       = '1.21'
     }
 
     options {

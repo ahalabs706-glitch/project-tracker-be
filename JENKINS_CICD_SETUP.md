@@ -116,7 +116,7 @@ docker-compose down -v
 
 - Jenkins 2.350+ dengan agent yang memiliki:
   - Docker & Docker Compose
-  - Go 1.21+
+  - Go 1.26+ for lint and tests (see `go.mod` for the minimum version)
   - Git
   - SSH client
   - `gosec`, `gofmt`, `trivy` (optional untuk security scan)
