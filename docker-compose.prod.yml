@@ -1,0 +1,138 @@
+services:
+  db-setup:
+    build:
+      context: .
+    entrypoint: ["/usr/local/bin/projectflow-db"]
+    command: ["up"]
+    environment:
+      APP_ENV: production
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: ${DATABASE_URL:?set a production DATABASE_URL}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set a unique production JWT_ACCESS_SECRET}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set a unique production REDIS_PASSWORD}
+      SEED_DEMO_DATA: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+    environment:
+      APP_PORT: "4000"
+      APP_ENV: production
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: ${DATABASE_URL:?set a production DATABASE_URL}
+      WEB_ORIGIN: ${WEB_ORIGIN:?set the production frontend origin}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set a unique production JWT_ACCESS_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set a unique production REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB:-0}
+    ports:
+      - "${APP_PORT:-4000}:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/health"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 15s
+
+  frontend:
+    build:
+      context: ../project-tracker-fe
+      args:
+        VITE_API_BASE_URL: /api/v1
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+    init: true
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+    entrypoint: ["/usr/local/bin/projectflow-worker"]
+    environment:
+      APP_ENV: production
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Jakarta}
+      DATABASE_URL: ${DATABASE_URL:?set a production DATABASE_URL}
+      WEB_ORIGIN: ${WEB_ORIGIN:?set the production frontend origin}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set a unique production JWT_ACCESS_SECRET}
+      JWT_ACCESS_TTL: ${JWT_ACCESS_TTL:-15m}
+      JWT_REFRESH_TTL: ${JWT_REFRESH_TTL:-168h}
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set a unique production REDIS_PASSWORD}
+      REDIS_DB: ${REDIS_DB:-0}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      db-setup:
+        condition: service_completed_successfully
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-projectflow}
+      POSTGRES_USER: ${POSTGRES_USER:-projectflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set a unique production POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD:?set a unique production REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?set a unique production REDIS_PASSWORD}", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

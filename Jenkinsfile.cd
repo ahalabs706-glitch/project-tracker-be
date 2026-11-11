@@ -1,0 +1,202 @@
+
+pipeline {
+    agent any
+
+    parameters {
+        string(
+            name: 'IMAGE_REPO',
+            defaultValue: 'aha706/projectflow-api-dev',
+            description: 'Docker Hub repository yang dikirim oleh CI'
+        )
+        string(
+            name: 'IMAGE_TAG',
+            defaultValue: '1',
+            description: 'Tag image dari BUILD_NUMBER CI'
+        )
+    }
+
+    environment {
+        REGISTRY = 'docker.io'
+        DEPLOY_USER = 'ubuntu'
+        APP_DIR = '/home/ubuntu/apps/projectflow/backend'
+
+        SSH_CREDENTIALS_ID = 'deploy-ssh-key'
+        KNOWN_HOSTS_CREDENTIALS_ID = 'ssh-known-hosts'
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    stages {
+        stage('Validate Parameters') {
+            steps {
+                script {
+                    if (!params.IMAGE_TAG?.trim() ||
+                        !(params.IMAGE_TAG ==~ /^[0-9]+$/)) {
+                        error('IMAGE_TAG harus berisi BUILD_NUMBER CI yang valid.')
+                    }
+
+                    if (!(params.IMAGE_REPO in [
+                        'aha706/projectflow-api-dev',
+                        'aha706/projectflow-api'
+                    ])) {
+                        error("Repository image tidak diizinkan: ${params.IMAGE_REPO}")
+                    }
+
+                    if (env.BRANCH_NAME == 'develop') {
+                        if (params.IMAGE_REPO != 'aha706/projectflow-api-dev') {
+                            error('Branch develop hanya boleh deploy image dev.')
+                        }
+
+                        env.DEPLOY_HOST = '16.178.138.2'
+
+                    } else if (env.BRANCH_NAME == 'main') {
+                        if (params.IMAGE_REPO != 'aha706/projectflow-api') {
+                            error('Branch main hanya boleh deploy image production.')
+                        }
+
+                        env.DEPLOY_HOST = '3.27.25.5'
+
+                    } else {
+                        error("Branch tidak didukung: ${env.BRANCH_NAME}")
+                    }
+
+                    env.DEPLOY_IMAGE =
+                        "${params.IMAGE_REPO}:${params.IMAGE_TAG}"
+
+                    echo "Branch       : ${env.BRANCH_NAME}"
+                    echo "Deploy host  : ${env.DEPLOY_HOST}"
+                    echo "Deploy image : ${env.DEPLOY_IMAGE}"
+                }
+            }
+        }
+
+        stage('Checkout CD Configuration') {
+            steps {
+                checkout scm
+
+                sh '''
+                    set -eu
+
+                    test -f docker-compose.yml ||
+                    test -f docker-compose.yaml ||
+                    test -f compose.yaml
+                '''
+            }
+        }
+
+        stage('Deploy to Ubuntu') {
+            steps {
+                sshagent(credentials: ['deploy-ssh-key']) {
+                    sh '''
+                        set -eux
+
+                        echo "Checking loaded SSH identities..."
+                        ssh-add -l
+
+                        echo "Testing SSH connection..."
+                        ssh -vvv \
+                            -o BatchMode=yes \
+                            ubuntu@16.178.138.2 \
+                            "whoami"
+                    '''
+                }
+
+                sshagent(credentials: [env.SSH_CREDENTIALS_ID]) {
+
+                    withCredentials([
+                        file(
+                            credentialsId: env.KNOWN_HOSTS_CREDENTIALS_ID,
+                            variable: 'KNOWN_HOSTS'
+                        )
+                    ]) {
+
+                        sh '''
+                            set -eu
+
+                            # SSH configuration
+                            SSH_OPTS="-o UserKnownHostsFile=${KNOWN_HOSTS} \
+                                      -o StrictHostKeyChecking=yes \
+                                      -o BatchMode=yes"
+
+                            # Select Compose file
+                            if [ -f docker-compose.yml ]; then
+                                COMPOSE_FILE=docker-compose.yml
+                            elif [ -f docker-compose.yaml ]; then
+                                COMPOSE_FILE=docker-compose.yaml
+                            else
+                                COMPOSE_FILE=compose.yaml
+                            fi
+
+                            echo "Target: ${DEPLOY_HOST}"
+                            echo "Image : ${IMAGE_REPO}:${IMAGE_TAG}"
+
+                            # Verify SSH and create application directory
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "mkdir -p '${APP_DIR}'"
+
+                            # Upload Compose file only
+                            # Existing .env on server remains untouched
+                            rsync -az \
+                                -e "ssh $SSH_OPTS" \
+                                "$COMPOSE_FILE" \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}:${APP_DIR}/"
+
+                            # Validate Compose configuration
+                            echo "Validating Compose configuration..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' config -q"
+
+                            # Pull latest image
+                            echo "Pulling ${IMAGE_REPO}:${IMAGE_TAG}..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' pull"
+
+                            # Deploy
+                            echo "Starting deployment..."
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 IMAGE_REPO='${IMAGE_REPO}' \
+                                 IMAGE_TAG='${IMAGE_TAG}' \
+                                 docker compose -f '${COMPOSE_FILE}' up -d --no-build"
+
+                            # Verify container status
+                            echo "Container status:"
+
+                            ssh $SSH_OPTS \
+                                "${DEPLOY_USER}@${DEPLOY_HOST}" \
+                                "cd '${APP_DIR}' &&
+                                 docker compose -f '${COMPOSE_FILE}' ps"
+                        '''
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "CD SUCCESS: ${params.IMAGE_REPO}:${params.IMAGE_TAG}"
+        }
+
+        failure {
+            echo 'CD FAILED: Periksa Console Output Jenkins.'
+        }
+    }
+}
